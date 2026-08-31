@@ -18,11 +18,11 @@ tools whose source repositories may be private.
 ## Publishing
 
 - Source repositories own compilation, tests, and versioned archives.
-- Ingestion uses short-lived `publish/<tool>` branches following
+- Ingestion uses short-lived `publish/<tool>` tags following
   `docs/PUBLISHING.md`.
 - `.github/workflows/publish-cli.yml` validates checksums, updates the rolling
   `<tool>-latest` Release, generates `Formula/<tool>.rb`, verifies installation
-  on Apple Silicon and Intel macOS, and removes the ingestion branch.
+  on Apple Silicon and Intel macOS, and removes the ingestion tag.
 - Keep asset names versioned. Upload new assets and commit the new formula
   before removing superseded assets so Brew never points at a missing archive.
 - Extend `scripts/generate-formula.mjs` and its tests for shared packaging

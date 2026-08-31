@@ -2,7 +2,7 @@ name: Publish CLI
 
 on:
   push:
-    branches:
+    tags:
       - 'publish/**'
 
 permissions:
@@ -163,7 +163,7 @@ jobs:
               --paginate --jq '.[] | [.id, .name] | @tsv'
           )
 
-          git push origin --delete "$GITHUB_REF_NAME"
+          git push origin ":refs/tags/${GITHUB_REF_NAME}"
 
   verify-homebrew:
     name: Verify Homebrew (${{ matrix.runner }})

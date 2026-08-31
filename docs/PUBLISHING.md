@@ -3,9 +3,9 @@
 Each source repository owns its build and test process. This public repository
 owns only distribution metadata and public release assets.
 
-## Ingestion branch
+## Ingestion tag
 
-Push a branch named `publish/<tool>` containing:
+Create and push a temporary tag named `publish/<tool>` whose commit contains:
 
 ```text
 .publish/
@@ -18,8 +18,10 @@ Push a branch named `publish/<tool>` containing:
 Use a dedicated SSH deploy key attached to this repository with write access.
 Store its private key only as an Actions secret in the source repository.
 
-The branch should start from this repository's current `main`. The publish
-workflow deletes it after a successful release.
+The tagged commit should start from this repository's current `main`. The
+publish workflow deletes the tag after a successful release. Use a tag instead
+of a branch so GitHub does not show short-lived publisher branches on the
+repository home page.
 
 ## Manifest
 
@@ -64,5 +66,5 @@ For a tool named `example`, publishing updates:
 - install command `brew install Yibo-Zhang/tap/example`
 
 The workflow serializes publishes for each tool, verifies every checksum,
-retains the old release assets until the new Formula is committed, and then
-removes superseded assets.
+retains the old release assets until the new Formula is committed, removes
+superseded assets, and deletes the ingestion tag.

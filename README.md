@@ -39,8 +39,8 @@ brew upgrade teeble
 ## Publishing model
 
 Private source repositories compile and test their own binaries, then push a
-short-lived `publish/<tool>` branch here using a repository-scoped deploy key.
+short-lived `publish/<tool>` tag here using a repository-scoped deploy key.
 This repository validates the payload, updates the tool's rolling GitHub
-Release, generates `Formula/<tool>.rb`, and deletes the ingestion branch.
+Release, generates `Formula/<tool>.rb`, and deletes the ingestion tag.
 
 See [docs/PUBLISHING.md](docs/PUBLISHING.md) for the payload contract.
