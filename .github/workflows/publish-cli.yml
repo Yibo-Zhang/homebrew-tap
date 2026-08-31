@@ -1,0 +1,161 @@
+name: Publish CLI
+
+on:
+  push:
+    branches:
+      - 'publish/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate and stage payload
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/generate-formula.spec.mjs
+
+          tool="${GITHUB_REF_NAME#publish/}"
+          manifest=".publish/manifest.json"
+          assets_dir=".publish/assets"
+          test -f "$manifest"
+          test -d "$assets_dir"
+          test "$tool" = "$(jq -er '.tool' "$manifest")"
+          [[ "$tool" =~ ^[a-z][a-z0-9_-]*$ ]]
+
+          version="$(jq -er '.version' "$manifest")"
+          source_version="$(jq -er '.sourceVersion' "$manifest")"
+          release_title="$(jq -er '.releaseTitle' "$manifest")"
+          checksums="$(jq -er '.checksums' "$manifest")"
+          [[ "$checksums" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$ ]]
+          test -f "$assets_dir/$checksums"
+
+          while read -r checksum filename; do
+            filename="${filename#\*}"
+            [[ "$checksum" =~ ^[a-f0-9]{64}$ ]]
+            [[ "$filename" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.(tar\.gz|zip)$ ]]
+          done < "$assets_dir/$checksums"
+
+          diff -u \
+            <(find "$assets_dir" -maxdepth 1 -type f ! -name "$checksums" -printf '%f\n' | sort) \
+            <(awk '{ name=$2; sub(/^\*/, "", name); print name }' "$assets_dir/$checksums" | sort)
+          (
+            cd "$assets_dir"
+            sha256sum -c "$checksums"
+          )
+
+          for architecture in arm64 amd64; do
+            asset="$(jq -er ".macos.${architecture}.asset" "$manifest")"
+            expected="$(jq -er ".macos.${architecture}.sha256" "$manifest")"
+            actual="$(sha256sum "$assets_dir/$asset" | cut -d ' ' -f 1)"
+            test "$expected" = "$actual"
+          done
+
+          stage_dir="${RUNNER_TEMP}/homebrew-publish-${GITHUB_RUN_ID}"
+          mkdir -p "$stage_dir"
+          cp -R "$assets_dir" "$stage_dir/assets"
+          cp "$manifest" "$stage_dir/manifest.json"
+          node scripts/generate-formula.mjs "$manifest" "$stage_dir/formula.rb"
+
+          {
+            printf 'tool=%s\n' "$tool"
+            printf 'version=%s\n' "$version"
+            printf 'source_version=%s\n' "$source_version"
+            printf 'release_title=%s\n' "$release_title"
+            printf 'stage_dir=%s\n' "$stage_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload new rolling-release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOOL: ${{ steps.payload.outputs.tool }}
+          RELEASE_TITLE: ${{ steps.payload.outputs.release_title }}
+          SOURCE_VERSION: ${{ steps.payload.outputs.source_version }}
+          STAGE_DIR: ${{ steps.payload.outputs.stage_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${TOOL}-latest"
+          release_notes="Automatically published from ${SOURCE_VERSION}. Asset names are versioned so Homebrew updates remain transactional."
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$STAGE_DIR"/assets/* --clobber
+            gh release edit "$release_tag" --title "$RELEASE_TITLE" \
+              --notes "$release_notes" --latest=false
+          else
+            gh release create "$release_tag" "$STAGE_DIR"/assets/* \
+              --target "$GITHUB_SHA" --title "$RELEASE_TITLE" \
+              --notes "$release_notes" --latest=false
+          fi
+
+      - name: Update formula on main
+        id: formula
+        env:
+          TOOL: ${{ steps.payload.outputs.tool }}
+          VERSION: ${{ steps.payload.outputs.version }}
+          STAGE_DIR: ${{ steps.payload.outputs.stage_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git switch --force-create "formula-${TOOL}" origin/main
+          mkdir -p Formula
+          cp "$STAGE_DIR/formula.rb" "Formula/${TOOL}.rb"
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "Formula/${TOOL}.rb"
+          if ! git diff --cached --quiet; then
+            git commit -m "${TOOL}: update to ${VERSION}"
+          fi
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            git fetch origin main
+            git rebase origin/main
+          done
+          printf 'target_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Finalize rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOOL: ${{ steps.payload.outputs.tool }}
+          STAGE_DIR: ${{ steps.payload.outputs.stage_dir }}
+          TARGET_SHA: ${{ steps.formula.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${TOOL}-latest"
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${release_tag}" \
+            -f sha="$TARGET_SHA" -F force=true >/dev/null
+
+          keep_file="${RUNNER_TEMP}/homebrew-keep-${GITHUB_RUN_ID}.txt"
+          find "$STAGE_DIR/assets" -maxdepth 1 -type f -printf '%f\n' | sort > "$keep_file"
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '.id')"
+          while IFS=$'\t' read -r asset_id asset_name; do
+            if ! grep -Fxq "$asset_name" "$keep_file"; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            fi
+          done < <(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets" \
+              --paginate --jq '.[] | [.id, .name] | @tsv'
+          )
+
+          git push origin --delete "$GITHUB_REF_NAME"
