@@ -15,6 +15,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      tool: ${{ steps.payload.outputs.tool }}
+      binary: ${{ steps.payload.outputs.binary }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -37,6 +40,7 @@ jobs:
 
           version="$(jq -er '.version' "$manifest")"
           source_version="$(jq -er '.sourceVersion' "$manifest")"
+          binary="$(jq -er '.binary' "$manifest")"
           release_title="$(jq -er '.releaseTitle' "$manifest")"
           checksums="$(jq -er '.checksums' "$manifest")"
           [[ "$checksums" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$ ]]
@@ -73,6 +77,7 @@ jobs:
             printf 'tool=%s\n' "$tool"
             printf 'version=%s\n' "$version"
             printf 'source_version=%s\n' "$source_version"
+            printf 'binary=%s\n' "$binary"
             printf 'release_title=%s\n' "$release_title"
             printf 'stage_dir=%s\n' "$stage_dir"
           } >> "$GITHUB_OUTPUT"
@@ -159,3 +164,30 @@ jobs:
           )
 
           git push origin --delete "$GITHUB_REF_NAME"
+
+  verify-homebrew:
+    name: Verify Homebrew (${{ matrix.runner }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-26
+          - macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Install and test formula
+        env:
+          TOOL: ${{ needs.publish.outputs.tool }}
+          BINARY: ${{ needs.publish.outputs.binary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install "Yibo-Zhang/tap/${TOOL}"
+          brew test "Yibo-Zhang/tap/${TOOL}"
+          command -v "$BINARY"
+          "$BINARY" --version
