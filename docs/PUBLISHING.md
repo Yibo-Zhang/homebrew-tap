@@ -1,7 +1,42 @@
 # Publishing a CLI
 
-Each source repository owns its build and test process. This public repository
-owns only distribution metadata and public release assets.
+External source repositories own their build and test process. This repository
+also owns the source and build process for open-source tools under `tools/`.
+
+## Bark CLI
+
+Push changes to `tools/bark-cli/`, `scripts/build-bark-cli.sh`, the formula
+generator, or the publish workflow to `main`. The publish workflow builds and
+tests Bark CLI automatically. It can also be run manually on `main` using
+`workflow_dispatch`. No deploy key or separate source repository is needed for
+this path.
+
+The build script generates the same payload contract described below. It emits
+macOS arm64 and Linux amd64/arm64 archives, with the tool's MIT license and
+README included. Versions combine `tools/bark-cli/VERSION` with the source
+commit's UTC timestamp; archive names also include the source revision. Raising
+the base version is optional for routine fixes and appropriate for interface
+changes.
+
+To build and inspect a payload locally (Go, Node, GNU tar, gzip and sha256sum):
+
+```sh
+bash scripts/build-bark-cli.sh /tmp/bark-cli-payload
+node scripts/generate-formula.mjs /tmp/bark-cli-payload/manifest.json /tmp/bark-cli.rb
+```
+
+Use an empty output directory. The workflow keeps Bark's older versioned
+assets available so clients with older tap metadata can still install them.
+Re-running a published source revision reuses identical assets. If an asset's
+bytes differ (for example after a Go compiler update), publication fails before
+overwriting it; publish a new source revision to produce new asset names.
+Publishing runs for the same tool are serialized without canceling an active
+publication. Homebrew installation is verified on the architectures present
+in `macos`; Bark CLI declares only Apple Silicon.
+
+The generated formula update does not retrigger the source build. A consuming
+Nix configuration updates this repository's flake input and deploys separately.
+That deployment does not publish a Homebrew release.
 
 ## Ingestion tag
 
@@ -26,8 +61,12 @@ repository home page.
 ## Manifest
 
 The schema is intentionally small and macOS-focused because the generated file
-is a Homebrew formula. Other platform archives may still be included in
-`assets/` and will be attached to the public Release.
+is a Homebrew formula. `macos` must include `arm64`, `amd64`, or both. Other
+platform archives may still be included in `assets/` and will be attached to
+the public Release. An optional `license` may be `MIT`, `Apache-2.0`,
+`BSD-2-Clause`, or `BSD-3-Clause`; omit it for proprietary binaries. Do not
+assign an open-source license to an existing proprietary tool without its
+owner's explicit authorization.
 
 ```json
 {
@@ -67,4 +106,4 @@ For a tool named `example`, publishing updates:
 
 The workflow serializes publishes for each tool, verifies every checksum,
 retains the old release assets until the new Formula is committed, removes
-superseded assets, and deletes the ingestion tag.
+superseded external-tool assets, and deletes external ingestion tags.

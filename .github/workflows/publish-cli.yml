@@ -2,26 +2,46 @@ name: Publish CLI
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'publish/**'
+    paths:
+      - 'tools/bark-cli/**'
+      - 'scripts/build-bark-cli.sh'
+      - 'scripts/generate-formula*'
+      - '.github/workflows/publish-cli.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: publish-cli-${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-cli-${{ startsWith(github.ref, 'refs/tags/publish/') && github.ref_name || 'publish/bark-cli' }}
+  cancel-in-progress: false
 
 jobs:
   publish:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/publish/')
     runs-on: ubuntu-latest
     outputs:
       tool: ${{ steps.payload.outputs.tool }}
       binary: ${{ steps.payload.outputs.binary }}
+      runners: ${{ steps.payload.outputs.runners }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        if: github.ref == 'refs/heads/main'
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build Bark CLI from main
+        if: github.ref == 'refs/heads/main'
+        run: bash scripts/build-bark-cli.sh "$GITHUB_WORKSPACE/.publish"
 
       - name: Validate and stage payload
         id: payload
@@ -30,7 +50,11 @@ jobs:
           set -euo pipefail
           node --test scripts/generate-formula.spec.mjs
 
-          tool="${GITHUB_REF_NAME#publish/}"
+          if [[ "$GITHUB_REF" == 'refs/heads/main' ]]; then
+            tool='bark-cli'
+          else
+            tool="${GITHUB_REF_NAME#publish/}"
+          fi
           manifest=".publish/manifest.json"
           assets_dir=".publish/assets"
           test -f "$manifest"
@@ -60,18 +84,19 @@ jobs:
             sha256sum -c "$checksums"
           )
 
-          for architecture in arm64 amd64; do
+          stage_dir="${RUNNER_TEMP}/homebrew-publish-${GITHUB_RUN_ID}"
+          mkdir -p "$stage_dir"
+          node scripts/generate-formula.mjs "$manifest" "$stage_dir/formula.rb"
+
+          for architecture in $(jq -er '.macos | keys | .[]' "$manifest"); do
             asset="$(jq -er ".macos.${architecture}.asset" "$manifest")"
             expected="$(jq -er ".macos.${architecture}.sha256" "$manifest")"
             actual="$(sha256sum "$assets_dir/$asset" | cut -d ' ' -f 1)"
             test "$expected" = "$actual"
           done
 
-          stage_dir="${RUNNER_TEMP}/homebrew-publish-${GITHUB_RUN_ID}"
-          mkdir -p "$stage_dir"
           cp -R "$assets_dir" "$stage_dir/assets"
           cp "$manifest" "$stage_dir/manifest.json"
-          node scripts/generate-formula.mjs "$manifest" "$stage_dir/formula.rb"
 
           {
             printf 'tool=%s\n' "$tool"
@@ -80,6 +105,7 @@ jobs:
             printf 'binary=%s\n' "$binary"
             printf 'release_title=%s\n' "$release_title"
             printf 'stage_dir=%s\n' "$stage_dir"
+            printf 'runners=%s\n' "$(jq -c '.macos | keys | map(if . == "arm64" then "macos-26" else "macos-15-intel" end)' "$manifest")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload new rolling-release assets
@@ -95,7 +121,25 @@ jobs:
           release_tag="${TOOL}-latest"
           release_notes="Automatically published from ${SOURCE_VERSION}. Asset names are versioned so Homebrew updates remain transactional."
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release upload "$release_tag" "$STAGE_DIR"/assets/* --clobber
+            if [[ "$TOOL" == 'bark-cli' ]]; then
+              existing_dir="$STAGE_DIR/existing"
+              mkdir -p "$existing_dir"
+              gh release view "$release_tag" --json assets --jq '.assets[].name' > "$existing_dir/names.txt"
+              for asset in "$STAGE_DIR"/assets/*; do
+                asset_name="${asset##*/}"
+                if grep -Fxq -- "$asset_name" "$existing_dir/names.txt"; then
+                  gh release download "$release_tag" --pattern "$asset_name" --dir "$existing_dir"
+                  if ! cmp -s "$asset" "$existing_dir/$asset_name"; then
+                    echo "Published Bark asset differs: $asset_name. Publish a new source revision instead of replacing it." >&2
+                    exit 1
+                  fi
+                else
+                  gh release upload "$release_tag" "$asset"
+                fi
+              done
+            else
+              gh release upload "$release_tag" "$STAGE_DIR"/assets/* --clobber
+            fi
             gh release edit "$release_tag" --title "$RELEASE_TITLE" \
               --notes "$release_notes" --latest=false
           else
@@ -150,6 +194,14 @@ jobs:
           gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${release_tag}" \
             -f sha="$TARGET_SHA" -F force=true >/dev/null
 
+          # Keep Bark's versioned assets available for clients with older tap metadata.
+          if [[ "$TOOL" == 'bark-cli' ]]; then
+            if [[ "$GITHUB_REF" == refs/tags/publish/* ]]; then
+              git push origin ":refs/tags/${GITHUB_REF_NAME}"
+            fi
+            exit 0
+          fi
+
           keep_file="${RUNNER_TEMP}/homebrew-keep-${GITHUB_RUN_ID}.txt"
           find "$STAGE_DIR/assets" -maxdepth 1 -type f -printf '%f\n' | sort > "$keep_file"
           release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '.id')"
@@ -163,7 +215,9 @@ jobs:
               --paginate --jq '.[] | [.id, .name] | @tsv'
           )
 
-          git push origin ":refs/tags/${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/publish/* ]]; then
+            git push origin ":refs/tags/${GITHUB_REF_NAME}"
+          fi
 
   verify-homebrew:
     name: Verify Homebrew (${{ matrix.runner }})
@@ -171,9 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - macos-26
-          - macos-15-intel
+        runner: ${{ fromJSON(needs.publish.outputs.runners) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
