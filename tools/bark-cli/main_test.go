@@ -12,13 +12,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
 func cleanEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"BARK_CONFIG", "BARK_SERVER", "BARK_KEY", "BARK_KEY_FILE"} {
+	for _, name := range []string{"BARK_CONFIG", "BARK_SERVER", "BARK_KEY", "BARK_KEY_FILE", "BARK_ENCRYPTION_KEY_FILE", "BARK_ENCRYPTION_MODE"} {
 		old, existed := os.LookupEnv(name)
 		os.Unsetenv(name)
 		t.Cleanup(func() {
@@ -29,6 +30,18 @@ func cleanEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func acceptedResponse(w http.ResponseWriter, payload map[string]any) {
+	if keys, ok := payload["device_keys"].([]any); ok {
+		items := make([]map[string]any, len(keys))
+		for i, key := range keys {
+			items[i] = map[string]any{"device_key": key, "code": 200}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": items})
+		return
+	}
+	fmt.Fprint(w, `{"code":200,"message":"secret reflected content"}`)
 }
 
 func configFile(t *testing.T, content string) string {
@@ -63,7 +76,7 @@ func TestPushPrecedenceAndStdin(t *testing.T) {
 			t.Error(err)
 		}
 		received <- payload
-		fmt.Fprint(w, `{"code":200,"message":"secret reflected content"}`)
+		acceptedResponse(w, payload)
 	}))
 	defer server.Close()
 	path := configFile(t, fmt.Sprintf(`{"server":%q,"key":"default-secret"}`, server.URL+"/base/"))
@@ -75,6 +88,7 @@ func TestPushPrecedenceAndStdin(t *testing.T) {
 	}{
 		{"flags override JSON", []string{"--json", `{"body":"json body","title":"old","badge":9,"volume":8,"id":"old"}`, "--title=", "--badge=0", "--volume=0", "--id=new", "positional"}, "", map[string]any{"body": "positional", "title": "", "badge": float64(0), "volume": "0", "id": "new", "device_key": "default-secret"}},
 		{"piped body", nil, "piped\nbody\n", map[string]any{"body": "piped\nbody\n", "device_key": "default-secret"}},
+		{"piped body with title", []string{"--title", "Result"}, "piped\n", map[string]any{"body": "piped\n", "title": "Result", "device_key": "default-secret"}},
 		{"explicit stdin", []string{"--body", "-"}, "explicit", map[string]any{"body": "explicit", "device_key": "default-secret"}},
 		{"JSON stdin batch", []string{"--json", "-"}, `{"body":"batch","device_keys":["one-secret","two-secret"],"ttl":0,"autoCopy":"1"}`, map[string]any{"body": "batch", "device_keys": []any{"one-secret", "two-secret"}, "ttl": float64(0), "autoCopy": "1"}},
 		{"JSON single", []string{"--json", `{"body":"single","device_key":"override-secret"}`}, "", map[string]any{"body": "single", "device_key": "override-secret"}},
@@ -186,7 +200,7 @@ func TestConfigOverridesAndBatchSkipsKeyFile(t *testing.T) {
 		var payload map[string]any
 		json.NewDecoder(r.Body).Decode(&payload)
 		received <- payload
-		fmt.Fprint(w, `{"code":200}`)
+		acceptedResponse(w, payload)
 	}))
 	defer server.Close()
 	path := configFile(t, `{"server":"https://unused.invalid","key":"config-secret"}`)
@@ -202,7 +216,11 @@ func TestConfigOverridesAndBatchSkipsKeyFile(t *testing.T) {
 		t.Fatal("environment key did not win")
 	}
 	keyFile := configFile(t, "file-secret\n")
-	code, _, output = invoke(t, []string{"push", "--key-file", keyFile, "hello"}, nil)
+	keyLink := filepath.Join(t.TempDir(), "key-link")
+	if err := os.Symlink(keyFile, keyLink); err != nil {
+		t.Fatal(err)
+	}
+	code, _, output = invoke(t, []string{"push", "--key-file", keyLink, "hello"}, nil)
 	if code != 0 {
 		t.Fatal(output)
 	}
@@ -324,6 +342,10 @@ func TestRealBinary(t *testing.T) {
 	}))
 	defer server.Close()
 	path := configFile(t, fmt.Sprintf(`{"server":%q,"key":"binary-secret"}`, server.URL))
+	fifo := filepath.Join(t.TempDir(), "key-fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		args []string
 		exit int
@@ -333,11 +355,21 @@ func TestRealBinary(t *testing.T) {
 		{[]string{"push", "--config", path, "reject"}, 1},
 		{[]string{"push", "--config", path, "trailing"}, 0},
 		{[]string{"push", "--config", path, "--badge=bad-secret", "reject"}, 2},
+		{[]string{"push", "--config", fifo, "--timeout=10ms", "reject"}, 2},
+		{[]string{"push", "--config", path, "--key-file", fifo, "--timeout=10ms", "reject"}, 2},
+		{[]string{"push", "--config", path, "--encrypt", "--encryption-key-file", fifo, "--timeout=10ms", "reject"}, 2},
+		{[]string{"push", "--config", path, "--key-file", filepath.Dir(fifo), "reject"}, 2},
 	} {
-		cmd := exec.Command(binary, tc.args...)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cmd := exec.CommandContext(ctx, binary, tc.args...)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err := cmd.Run()
+		timedOut := ctx.Err() != nil
+		cancel()
+		if timedOut {
+			t.Fatal("CLI hung instead of returning a JSON result")
+		}
 		exit := 0
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {

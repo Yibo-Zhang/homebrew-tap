@@ -1,0 +1,156 @@
+bark-cli: send Bark notifications. Output is always one JSON object on stdout.
+
+QUICK START
+  bark-cli push 'ok'
+  bark-cli push --title 'Task complete' --group agent 'Build and tests passed'
+  bark-cli push --markdown '**Build passed**' --image https://example.com/result.png
+  bark-cli push --id build-42 'Started'
+  bark-cli push --id build-42 'Finished'
+  bark-cli push --delete --id build-42
+  printf 'Long message\n' | bark-cli push --title 'Summary'
+  bark-cli push --json - < notification.json
+
+USAGE
+  bark-cli [global flags] push [flags] [body]
+  bark-cli --help | --version
+  bark-cli push --help
+
+Put all flags BEFORE the positional body. A body that starts with '-' can use
+--body=TEXT or follow '--'. --body and positional body cannot be combined.
+--body - or positional '-' reads stdin. Without a body, JSON, Markdown, image,
+ciphertext or delete action, piped stdin supplies the body (newlines preserved).
+--json - reads one JSON object from stdin; stdin cannot supply JSON and body
+together. --json STRING accepts inline JSON. Flags override JSON, including
+empty strings, zero and explicit boolean false; invalid JSON fails first.
+A notification needs nonempty body/title/subtitle/markdown/image/ciphertext,
+or --delete with --id. Markdown/image/ciphertext/delete do not require a body.
+
+GLOBAL OPTIONS (also accepted after push)
+  --config PATH       Select config file (an explicit file must exist).
+  --server URL        Server base URL; default https://api.day.app.
+  --key-file PATH     File containing the device key, read at runtime.
+  --timeout DURATION  Stdin/HTTP timeout; default 10s, e.g. 500ms or 30s.
+  --help, -h          Print this complete help in the JSON "help" field.
+  --version          Print JSON version information.
+
+PUSH OPTIONS
+  --title TEXT       Notification title.
+  --subtitle TEXT    Subtitle.
+  --body TEXT        Plain body, or '-' for stdin.
+  --markdown TEXT    Basic Markdown; the app gives it precedence over body.
+  --image URL        Image attachment URL, downloaded by the Bark app.
+  --icon URL         Custom notification icon URL.
+  --group TEXT       Notification/history group.
+  --url URL          Open this URL when the notification is tapped.
+  --level VALUE      active, passive, timeSensitive, or critical.
+                     App notification permissions control actual behavior.
+  --sound NAME       Bark ringtone, e.g. birdsong.
+  --volume INT       Critical-alert volume, 0..10.
+  --badge INT        App badge number; negative values are passed through.
+  --call             Repeat the ringtone (app behavior).
+  --auto-copy        Request automatic copying (depends on iOS version).
+  --copy TEXT        Override text copied from the notification.
+  --archive          Save the notification in app history.
+  --ttl SECONDS      Archive retention time, nonnegative integer.
+  --action VALUE     App tap behavior, e.g. alert or none.
+  --id TEXT          Reuse an ID to update the corresponding notification.
+  --delete           Delete notification with --id. Requires app support and
+                     Background App Refresh; sends a request immediately.
+  --ciphertext TEXT  Already encrypted Base64 payload (no encryption performed).
+  --iv TEXT          Optional IV for pre-encrypted ciphertext.
+  --json STRING|-    Supply any of the JSON fields documented below.
+
+Boolean flags --call, --auto-copy, --archive and --delete take no following
+value. Use --archive=false, for example, to override JSON/default behavior.
+Recipients come from config unless JSON specifies device_key OR device_keys.
+There is no plaintext device-key flag: use a key file or JSON stdin.
+
+ALL JSON FIELDS (case-sensitive)
+  String: title, subtitle, body, markdown, image, icon, group, url, level, sound,
+          copy, action, id, ciphertext, iv.
+  Recipient: device_key (nonempty string), OR device_keys (nonempty string array).
+  Integer: badge (any integer), ttl (>=0).
+  Integer or decimal string: volume (0..10); sent as a string.
+  String or integer: call, autoCopy, isArchive, delete; sent as strings.
+                     "1" enables the option; other values disable it.
+  --auto-copy corresponds to autoCopy; --archive corresponds to isArchive.
+  Unknown fields, wrong types, duplicate names, nulls and trailing JSON fail.
+  ciphertext can only be combined with recipients, iv, id and delete routing;
+  do not mix it with plaintext notification fields. iv requires ciphertext.
+
+  Example notification.json (replace placeholders, keep credentials private):
+    {"body":"Build passed","device_keys":["KEY_A","KEY_B"],
+     "group":"agent","isArchive":1,"ttl":3600}
+  Example with default recipient:
+    bark-cli push --json '{"markdown":"**Done**","copy":"result","badge":0}'
+
+ENCRYPTION
+  --encrypt                     Encrypt the notification before sending.
+  --encryption-key-file PATH    Read the AES key from a private file.
+  --encryption-mode MODE        cbc (default), ecb, or gcm.
+  The file contains the exact printable ASCII key configured in Bark (16, 24 or
+  32 bytes for AES-128/192/256); one trailing LF or CRLF is removed. This AES
+  key is DIFFERENT from the Bark device key. Configure matching mode/key in
+  the app first. Setting a key file alone does not enable encryption; use
+  --encrypt on each encrypted push. Invalid configuration fails before HTTP.
+  Match the app's padding: CBC/ECB use PKCS#7, GCM uses no padding. CBC/GCM
+  send a fresh printable ASCII iv (16/12 characters). GCM ciphertext is Base64
+  of encrypted bytes followed by a 16-byte tag; the nonce is not prepended.
+  ECB is for compatibility with existing app settings. All notification content
+  is encrypted. Recipient keys and routing id/delete remain outside; id/delete
+  are also encrypted inside for app processing. Batch recipients must share
+  the same encryption key and mode.
+  --encrypt cannot be combined with pre-encrypted ciphertext or a custom iv.
+
+    bark-cli push --encrypt --encryption-key-file /private/bark-aes-key \
+      --encryption-mode cbc --title 'Private result' 'Build passed'
+
+CONFIGURATION
+  Default file:
+    Linux: $XDG_CONFIG_HOME/bark-cli/config.json, or ~/.config/bark-cli/config.json
+    macOS: ~/Library/Application Support/bark-cli/config.json
+  Example (all fields optional):
+    {"server":"https://api.day.app",
+     "key_file":"/absolute/private/bark-device-key", "timeout":"10s",
+     "encryption_key_file":"/absolute/private/bark-aes-key", "encryption_mode":"cbc"}
+  Supported fields: server, key, key_file, timeout, encryption_key_file,
+  encryption_mode. All values are strings; names are exact lowercase.
+  key may replace key_file, but both cannot be nonempty. Prefer a private key
+  file with mode 0600. Relative paths resolve from the current working directory.
+  Config is read-only; the CLI never writes keys or registers devices.
+
+  Environment:
+    BARK_CONFIG selects the config file instead of the default location.
+    BARK_SERVER, BARK_KEY_FILE, BARK_KEY, BARK_ENCRYPTION_KEY_FILE,
+    BARK_ENCRYPTION_MODE override the config. BARK_KEY wins over BARK_KEY_FILE.
+  Precedence: defaults < config < environment < explicit flags. --key-file
+  overrides environment credentials. JSON recipients replace the default
+  recipient and skip reading its key file. Empty env values are explicit
+  overrides. URL base paths work; userinfo, queries and fragments are rejected.
+
+RESULTS AND EXIT CODES
+  One JSON object on stdout; no normal diagnostics on stderr.
+  Exit 0: success/help/version. Exit 2: usage/config. Exit 1: request/server.
+  Single success: {"ok":true,"http_status":200,"code":200}
+  Failure: {"ok":false,"error":"usage","message":"..."}
+  HTTP/response failures also report http_status and code when available.
+  Batch success requires EVERY recipient to return code 200. Results are
+  matched to input recipients even if the server reorders them:
+    {"ok":false,"http_status":200,"code":200,"error":"server",
+     "message":"At least one notification failed; inspect results by input index.",
+     "results":[{"index":0,"ok":true,"code":200},{"index":1,"ok":false,"code":400}]}
+  index is zero-based in the input device_keys array; no keys or raw server
+  messages are printed. Missing/malformed/unmatched results fail closed.
+  Success means the service accepted the notification, not that it was read.
+  No automatic retries or redirects. Retrying an uncertain/partial request can
+  duplicate notifications; choose failed recipient indices deliberately.
+
+LIMITS
+  Stdin/config/combined wire request: 1 MiB. Key files/responses: 64 KiB.
+  Bark/APNs may impose a smaller payload limit. Timeout covers stdin and HTTP
+  after config loading. Config/key files must be regular files (symlinks to
+  regular files work); pipes, devices and directories are rejected. SIGINT/SIGTERM cancels.
+
+REFERENCE
+  https://github.com/Finb/Bark/blob/master/docs/en-us/tutorial.md
+  https://github.com/Yibo-Zhang/homebrew-tap/tree/main/tools/bark-cli

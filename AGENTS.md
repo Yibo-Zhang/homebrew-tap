@@ -47,5 +47,12 @@ For Bark CLI changes, also run `go test ./...` and `go vet ./...` from
 `tools/bark-cli`, plus `nix build .#bark-cli` for package changes. Use local
 mock HTTP servers and dummy keys in tests; never send real notifications.
 
+Keep Bark's complete agent-facing reference in `tools/bark-cli/help.txt`, which
+is embedded in `--help`. Preserve one JSON result, meaningful exit codes and
+credential-free diagnostics. Batch success requires every input recipient to
+have a matching successful result; test reordered and partial responses.
+Encryption changes need an upstream-compatible test vector and checks that
+plaintext fields never leak into the outer request.
+
 For an end-to-end change, publish a real payload and require all declared
 macOS architecture jobs to pass `brew install` and `brew test`.

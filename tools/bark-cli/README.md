@@ -1,112 +1,136 @@
 # bark-cli
 
-A small, original, MIT-licensed Go client for sending [Bark](https://github.com/Finb/Bark)
-notifications. Standard library only. Every invocation prints one JSON object to
-stdout, including help and failures. No configuration writes, background process,
-automatic retries, or built-in agent/LLM integration.
+A small, original, MIT-licensed Go client for [Bark](https://github.com/Finb/Bark).
+Standard library only, with one JSON result per command and meaningful exit
+codes for agents and scripts. Supports Apple Silicon macOS and Linux amd64/arm64.
 
 ```sh
-bark-cli --version
-# {"ok":true,"version":"0.1.0"}
+brew install Yibo-Zhang/tap/bark-cli
 bark-cli --help
-bark-cli push --title 'Build complete' --group builds 'Ready to review'
-printf 'Build log summary\n' | bark-cli push --title 'Build complete'
-bark-cli push --body - < summary.txt
-bark-cli push --json '{"body":"Hello","badge":5}' --badge 0
-bark-cli push --json - < notification.json
+bark-cli push --title 'Task complete' --group agent 'Build and tests passed'
+printf 'Build log summary\n' | bark-cli push --title 'Summary'
+bark-cli push --markdown '**Done**' --image https://example.com/result.png
+bark-cli push --id build-42 'Started'
+bark-cli push --id build-42 'Finished'
+bark-cli push --delete --id build-42
 ```
 
-Put flags before the positional body. Global flags may appear before `push` or
-among its flags. `--body` and a positional body are mutually exclusive. An
-explicit body overrides a JSON body; `-` reads stdin. Piped stdin is used
-automatically only when neither a body nor `--json` is supplied. JSON stdin and
-body stdin cannot be combined. A nonempty body is required; stdin newlines are
-preserved. Text containing a leading dash can follow `--` or use `--body=TEXT`.
+Put flags **before** the positional body. Boolean flags such as `--archive`
+take no following value; use `--archive=false` to explicitly disable them.
+Markdown, images, existing ciphertext and deletion requests do not require a
+dummy body. Deletion requires an ID and the app's Background App Refresh.
+
+The complete option, JSON-field, configuration, result and example reference is
+[help.txt](https://github.com/Yibo-Zhang/homebrew-tap/blob/main/tools/bark-cli/help.txt).
+It is embedded in the binary: **`bark-cli --help` works without this repository or
+network access**. Agents with terminal access can discover the supported syntax
+there. No separate MCP server, agent framework or automatic notification hook
+is required; the caller decides when to send a notification.
 
 ## Configuration
 
-The optional default file is `bark-cli/config.json` under Go's user configuration
-directory: `$XDG_CONFIG_HOME` or `~/.config` on Linux, and `~/Library/Application
-Support` on macOS. Select another file using `--config PATH` or `BARK_CONFIG`.
-An explicitly selected file must exist. Malformed files, unknown fields, null
-fields, duplicate fields, and ambiguous credentials are rejected. Configuration
-field names are case-sensitive and must use the exact lowercase names below.
+Default file: `~/.config/bark-cli/config.json` on Linux (or
+`$XDG_CONFIG_HOME/bark-cli/config.json`), and
+`~/Library/Application Support/bark-cli/config.json` on macOS.
 
 ```json
 {
   "server": "https://api.day.app",
-  "key_file": "/absolute/path/to/bark-device-key",
+  "key_file": "/absolute/private/bark-device-key",
   "timeout": "10s"
 }
 ```
 
-Store the device key as plain text in a private file, readable only by your user
-(for example, mode `0600`). A trailing newline is trimmed. The file is read at
-runtime; it is never printed. Configuration can instead contain a `key` string,
-but cannot contain both nonempty `key` and `key_file`. Relative key file paths
-are resolved from the current working directory.
+Keep the device key in a private file, for example mode `0600`. The CLI reads
+configuration and keys at runtime; it never writes them or registers devices.
+It accepts `key` instead of `key_file`, but not both nonempty. Configuration
+fields are case-sensitive. Relative key paths resolve from the working directory.
 
-Defaults are `https://api.day.app` and `10s`. Precedence, from lowest to highest:
+Precedence: defaults < config < environment < explicit flags. `--config` or
+`BARK_CONFIG` selects another file. Environment overrides are `BARK_SERVER`,
+`BARK_KEY_FILE` and `BARK_KEY` (the latter wins over the former). `--key-file`
+overrides both environment credentials. Explicit JSON `device_key` or
+`device_keys` replaces the default recipient and skips loading its key file.
 
-1. Defaults, then the selected configuration file.
-2. `BARK_SERVER`; `BARK_KEY_FILE` replaces configured credentials; `BARK_KEY`
-   replaces both configured and environment key files if both variables are set.
-3. `--server`, `--key-file`, and `--timeout`. An explicit key file replaces the
-   environment key. Timeout uses a positive Go duration such as `500ms` or `10s`.
-4. Payload `device_key` or `device_keys` selects recipients directly. Default
-   credentials and their key file are unused when either field is present.
+## Advanced payloads and batch results
 
-An empty environment variable is an explicit override. There is no `--key` flag;
-prefer a key file to avoid putting credentials in process arguments. Treat JSON
-payloads with device keys as secrets as well; stdin avoids shell history exposure.
+All fields in the [official push parameter reference](https://github.com/Finb/Bark/blob/master/docs/en-us/tutorial.md)
+are supported. Use `--json STRING` or `--json -` for a JSON payload. Unknown
+fields, wrong types, duplicates and nulls fail with exit 2. Explicit flags
+override valid JSON, including zero, empty strings and false.
 
-Self-hosted HTTP(S) servers and URL base paths are supported: `--server
-http://127.0.0.1:8080/bark` sends to `/bark/push`. Server URLs containing userinfo,
-queries, or fragments are rejected. Redirects are never followed.
+```sh
+bark-cli push --json '{"body":"Hello","badge":5,"isArchive":1}' --badge 0
+bark-cli push --json - < notification.json
+```
 
-## Payload and flags
+Batch JSON uses `device_keys: ["KEY_A", "KEY_B"]`; keep such inputs private.
+The CLI checks every recipient's result and matches it to the input array,
+even when the server returns results out of order. A partial failure exits 1:
 
-`--json` accepts one object, either inline or from stdin with `--json -`. All
-fields listed below are retained; unsupported fields fail with exit code 2.
-Duplicate keys, nulls, and invalid types fail before flag overrides are applied.
-Explicit flags override valid JSON fields, including empty strings and zero.
+```json
+{
+  "ok": false,
+  "http_status": 200,
+  "code": 200,
+  "error": "server",
+  "message": "At least one notification failed; inspect results by input index.",
+  "results": [
+    {"index": 0, "ok": true, "code": 200},
+    {"index": 1, "ok": false, "code": 400}
+  ]
+}
+```
 
-| JSON fields | Accepted types | CLI flags |
-| --- | --- | --- |
-| `title`, `body`, `subtitle`, `group`, `url`, `level`, `sound`, `id` | String | Same names |
-| `badge` | Nonnegative integer | `--badge INT` |
-| `volume` | Integer 0–10 or its string representation; sent as a string | `--volume INT` |
-| `device_key` | Nonempty string | JSON only |
-| `device_keys` | Nonempty array of nonempty strings | JSON only |
-| `call`, `autoCopy`, `copy`, `icon`, `ciphertext`, `isArchive`, `action` | String | JSON only |
-| `ttl` | Nonnegative integer | JSON only |
+Indices are zero-based. Device keys and raw server messages are never included
+in output. Missing, malformed or unmatched results fail closed. A success is
+service acceptance, not proof that someone read the notification. Requests are
+never retried automatically; choose failed recipients deliberately to avoid
+duplicate notifications after an uncertain or partial result.
 
-`level` values include `critical`, `active`, `timeSensitive`, and `passive`.
-Server and client versions determine support for individual notification options,
-including `id`. See the [Bark server API documentation](https://github.com/Finb/bark-server/blob/v2.3.5/docs/API_V2.md)
-for option semantics. This client does not encrypt `ciphertext` for you.
+## Encrypted notifications
+
+Match the encryption mode and key configured in the Bark app. The AES key is
+separate from the device key: store its exact printable ASCII bytes in a private file
+(16/24/32 bytes for AES-128/192/256, with one optional trailing LF or CRLF).
+
+```sh
+bark-cli push --encrypt --encryption-key-file /private/bark-aes-key \
+  --encryption-mode cbc --title 'Private result' 'Build passed'
+```
+
+Modes are `cbc` (default), `ecb` and `gcm`, matching Bark's implementation.
+Match the app's padding: CBC/ECB use PKCS#7 and GCM uses no padding. CBC/GCM
+send a fresh per-message ASCII `iv` (16/12 characters respectively). GCM
+encodes ciphertext followed by its 16-byte tag; the nonce is sent separately.
+ECB supports existing app configurations. Recipients and routing `id`/`delete`
+remain outside; `id`/`delete` are also preserved inside for app processing.
+Batch recipients must use the same encryption settings and key.
+
+Optional config fields `encryption_key_file` and `encryption_mode`, or
+environment variables `BARK_ENCRYPTION_KEY_FILE` and `BARK_ENCRYPTION_MODE`,
+provide defaults. **Encryption still requires `--encrypt` on the command.**
+Invalid keys/modes fail before HTTP. Existing ciphertext can be sent with
+`--ciphertext` and an optional `--iv` instead of `--encrypt`; only recipients
+and `id`/`delete` routing fields can accompany existing ciphertext.
 
 ## Results and limits
 
-Success requires HTTP 2xx and an integer Bark `code` of 200:
+All output, including help and errors, is one JSON object on stdout. Normal
+stderr is empty. Exit 0 means success/help/version, 2 means usage/configuration
+failure, and 1 means request/server failure. A single success is:
 
 ```json
 {"ok":true,"http_status":200,"code":200}
 ```
 
-Failures contain `ok:false`, a stable category (`usage`, `config`, `request`, or
-`server`), and a diagnostic `message`. Server failures also include `http_status`
-and, when an HTTP-success response has a valid code, `code`. Exit status is 0 for
-success/help/version, 2 for usage/configuration failures, and 1 for request/server
-failures. Diagnostics never echo request data, server response text, device keys,
-URLs, paths, or underlying transport errors. No stderr output is produced during
-normal command handling.
-
-Stdin, configuration, and the combined request are limited to 1 MiB; device key
-files to 64 KiB; responses to 64 KiB. The timeout covers stdin and the HTTP
-request after configuration is loaded. SIGINT/SIGTERM cancel that operation.
-Input errors, including a stdin timeout, use exit 2. Filesystem reads are intended
-for ordinary files. No notification is retried automatically.
+Stdin, configuration and the combined wire request are limited to 1 MiB;
+responses and key files to 64 KiB. Bark/APNs can impose a smaller payload limit.
+The timeout covers stdin and HTTP after configuration loads. SIGINT/SIGTERM
+cancels the operation. Self-hosted HTTP(S) and URL base paths work; redirects
+are disabled and URL userinfo, queries and fragments are rejected.
+Config/key files must be regular files, including symlinks to regular files;
+FIFOs, devices and directories are rejected without waiting for a writer.
 
 ## Development
 
@@ -118,7 +142,7 @@ go vet ./...
 go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bark-cli .
 ```
 
-Tests use local HTTP servers and include building and executing the production
-binary for success, rejection, help, version, and usage failure. They do not send
-real notifications. The [MIT license](LICENSE) applies to this tool directory
-only, not to other software distributed by this tap.
+Tests use local mock HTTP servers and dummy credentials, including encrypted
+wire compatibility, reordered/partial batch responses and production-binary
+execution. They do not send real notifications. The [MIT license](LICENSE)
+applies only to this tool directory.

@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -25,32 +26,27 @@ const maxInput = 1 << 20
 const maxResponse = 64 << 10
 
 type result struct {
-	OK         bool   `json:"ok"`
-	Version    string `json:"version,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Message    string `json:"message,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
-	Code       *int   `json:"code,omitempty"`
-	Help       string `json:"help,omitempty"`
+	OK         bool              `json:"ok"`
+	Version    string            `json:"version,omitempty"`
+	Error      string            `json:"error,omitempty"`
+	Message    string            `json:"message,omitempty"`
+	HTTPStatus int               `json:"http_status,omitempty"`
+	Code       *int              `json:"code,omitempty"`
+	Help       string            `json:"help,omitempty"`
+	Results    []recipientResult `json:"results,omitempty"`
 }
 
 type config struct {
-	Server  string `json:"server"`
-	Key     string `json:"key"`
-	KeyFile string `json:"key_file"`
-	Timeout string `json:"timeout"`
+	Server            string `json:"server"`
+	Key               string `json:"key"`
+	KeyFile           string `json:"key_file"`
+	Timeout           string `json:"timeout"`
+	EncryptionKeyFile string `json:"encryption_key_file"`
+	EncryptionMode    string `json:"encryption_mode"`
 }
 
-const help = `Usage: bark-cli [global flags] push [flags] [body]
-       bark-cli --version | --help
-Global flags: --config PATH, --server URL, --key-file PATH, --timeout 10s
-Push flags: --title, --body, --subtitle, --group, --url, --level, --sound,
-            --badge INT, --volume INT (0..10), --id, --json STRING|-
-Put flags before the positional body. Use --body - or a positional - to read
-stdin; when no body or JSON is supplied, piped stdin is read automatically.
-Explicit flags override JSON, including empty strings and zero values.
-Configuration is read-only. See README for environment and JSON field support.
-Exit codes: 0 success/help/version; 2 usage/config; 1 request/server failure.`
+//go:embed help.txt
+var help string
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -82,21 +78,29 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	fs.SetOutput(io.Discard) // flag errors can contain secret values.
 	var opts config
 	var configPath, jsonArg string
-	var showVersion, showHelp bool
+	var showVersion, showHelp, encrypt bool
 	fs.StringVar(&configPath, "config", "", "configuration file")
 	fs.StringVar(&opts.Server, "server", "", "Bark server")
 	fs.StringVar(&opts.KeyFile, "key-file", "", "device key file")
 	fs.StringVar(&opts.Timeout, "timeout", "", "request timeout")
+	fs.StringVar(&opts.EncryptionKeyFile, "encryption-key-file", "", "AES key file")
+	fs.StringVar(&opts.EncryptionMode, "encryption-mode", "", "AES mode")
+	fs.BoolVar(&encrypt, "encrypt", false, "encrypt notification content")
 	fs.StringVar(&jsonArg, "json", "", "JSON payload or -")
 	fs.BoolVar(&showVersion, "version", false, "version")
 	fs.BoolVar(&showHelp, "help", false, "help")
 	fs.BoolVar(&showHelp, "h", false, "help")
 	stringsFlags := map[string]*string{}
-	for _, name := range strings.Fields("title body subtitle group url level sound id") {
+	for _, name := range strings.Fields("title body subtitle group url level sound id markdown image icon copy action ciphertext iv") {
 		stringsFlags[name] = fs.String(name, "", name)
+	}
+	boolFlags := map[string]*bool{}
+	for _, name := range strings.Fields("call auto-copy archive delete") {
+		boolFlags[name] = fs.Bool(name, false, name)
 	}
 	badge := fs.Int("badge", 0, "badge")
 	volume := fs.Int("volume", 0, "volume")
+	ttl := fs.Int("ttl", 0, "archive retention in seconds")
 	if err := fs.Parse(args); err != nil {
 		return fail("usage", "Invalid flags; use --help.", 2)
 	}
@@ -153,11 +157,30 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			set(name, *value)
 		}
 	}
+	for name, value := range boolFlags {
+		if seen[name] {
+			field := name
+			if name == "auto-copy" {
+				field = "autoCopy"
+			}
+			if name == "archive" {
+				field = "isArchive"
+			}
+			text := "0"
+			if *value {
+				text = "1"
+			}
+			set(field, text)
+		}
+	}
 	if seen["badge"] {
 		set("badge", *badge)
 	}
 	if seen["volume"] {
 		set("volume", strconv.Itoa(*volume))
+	}
+	if seen["ttl"] {
+		set("ttl", *ttl)
 	}
 	if fs.NArg() == 1 {
 		if seen["body"] {
@@ -169,7 +192,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	_ = json.Unmarshal(payload["body"], &body)
 	_, bodySet := payload["body"]
 	stdinBody := (seen["body"] || fs.NArg() == 1) && body == "-"
-	if stdinBody || (!bodySet && !seen["json"] && input != nil) {
+	if stdinBody || (!bodySet && !hasAlternativeContent(payload) && !seen["json"] && input != nil) {
 		if seen["json"] && jsonArg == "-" {
 			return fail("usage", "Stdin cannot supply both JSON and body.", 2)
 		}
@@ -180,8 +203,16 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		body = string(data)
 		set("body", body)
 	}
-	if body == "" {
-		return fail("usage", "A nonempty body is required.", 2)
+	if err := validateNotification(payload); err != nil {
+		return fail("usage", err.Error(), 2)
+	}
+	if encrypt {
+		if _, exists := payload["ciphertext"]; exists {
+			return fail("usage", "--encrypt cannot be combined with ciphertext or iv.", 2)
+		}
+		if _, exists := payload["iv"]; exists {
+			return fail("usage", "--encrypt cannot be combined with ciphertext or iv.", 2)
+		}
 	}
 	_, single := payload["device_key"]
 	_, batch := payload["device_keys"]
@@ -206,6 +237,12 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		var numeric int
 		if json.Unmarshal(raw, &numeric) == nil {
 			set("volume", strconv.Itoa(numeric))
+		}
+	}
+	if encrypt {
+		payload, err = encryptPayload(payload, cfg)
+		if err != nil {
+			return fail("config", err.Error(), 2)
 		}
 	}
 	data, _ := json.Marshal(payload)
@@ -236,24 +273,16 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		status.Error, status.Message = "server", "Server returned an unsuccessful HTTP status."
 		return emit(status, 1)
 	}
-	var reply struct {
-		Code *int `json:"code"`
-	}
-	if err != nil || json.Unmarshal(data, &reply) != nil || reply.Code == nil {
+	if err != nil {
 		status.Error, status.Message = "server", "Server returned an invalid or oversized JSON response."
 		return emit(status, 1)
 	}
-	status.Code = reply.Code
-	if *reply.Code != 200 {
-		status.Error, status.Message = "server", "Bark rejected the notification."
-		return emit(status, 1)
-	}
-	status.OK = true
-	return emit(status, 0)
+	status, exitCode := parseResponse(data, payload, response.StatusCode)
+	return emit(status, exitCode)
 }
 
 func loadConfig(path string, explicit bool, opts config, seen map[string]bool) (config, error) {
-	cfg := config{Server: "https://api.day.app", Timeout: "10s"}
+	cfg := config{Server: "https://api.day.app", Timeout: "10s", EncryptionMode: "cbc"}
 	if !explicit {
 		if value, exists := os.LookupEnv("BARK_CONFIG"); exists {
 			path, explicit = value, true
@@ -270,8 +299,8 @@ func loadConfig(path string, explicit bool, opts config, seen map[string]bool) (
 		return cfg, errors.New("Cannot read configuration file (maximum 1 MiB).")
 	}
 	if err == nil {
-		if decodeObject(data, &cfg, "server", "key", "key_file", "timeout") != nil {
-			return cfg, errors.New("Configuration must be one JSON object with server, key, key_file, and timeout string fields only.")
+		if decodeObject(data, &cfg, "server", "key", "key_file", "timeout", "encryption_key_file", "encryption_mode") != nil {
+			return cfg, errors.New("Configuration must contain only the documented lowercase fields and string values; use --help.")
 		}
 		if cfg.Key != "" && cfg.KeyFile != "" {
 			return cfg, errors.New("Configuration must specify either key or key_file, not both.")
@@ -294,6 +323,18 @@ func loadConfig(path string, explicit bool, opts config, seen map[string]bool) (
 	}
 	if seen["timeout"] {
 		cfg.Timeout = opts.Timeout
+	}
+	if value, exists := os.LookupEnv("BARK_ENCRYPTION_KEY_FILE"); exists {
+		cfg.EncryptionKeyFile = value
+	}
+	if value, exists := os.LookupEnv("BARK_ENCRYPTION_MODE"); exists {
+		cfg.EncryptionMode = value
+	}
+	if seen["encryption-key-file"] {
+		cfg.EncryptionKeyFile = opts.EncryptionKeyFile
+	}
+	if seen["encryption-mode"] {
+		cfg.EncryptionMode = opts.EncryptionMode
 	}
 	return cfg, nil
 }
@@ -363,7 +404,7 @@ func validatePayload(payload map[string]json.RawMessage) error {
 			return errors.New("Payload fields cannot be null.")
 		}
 		switch name {
-		case "title", "subtitle", "body", "device_key", "level", "call", "autoCopy", "copy", "sound", "icon", "group", "ciphertext", "isArchive", "url", "action", "id":
+		case "title", "subtitle", "body", "device_key", "level", "copy", "sound", "icon", "group", "ciphertext", "url", "action", "id", "markdown", "image", "iv":
 			var value string
 			if json.Unmarshal(raw, &value) != nil {
 				return errors.New("Payload text fields must be strings.")
@@ -371,10 +412,20 @@ func validatePayload(payload map[string]json.RawMessage) error {
 			if name == "device_key" && strings.TrimSpace(value) == "" {
 				return errors.New("device_key must be nonempty.")
 			}
+		case "call", "autoCopy", "isArchive", "delete":
+			var value string
+			if json.Unmarshal(raw, &value) != nil {
+				var numeric int
+				if json.Unmarshal(raw, &numeric) != nil {
+					return errors.New("Switch fields must be strings or integers; 1 enables the option.")
+				}
+				value = strconv.Itoa(numeric)
+			}
+			payload[name], _ = json.Marshal(value)
 		case "badge", "ttl":
 			var value int
-			if json.Unmarshal(raw, &value) != nil || value < 0 {
-				return errors.New("badge and ttl must be nonnegative integers.")
+			if json.Unmarshal(raw, &value) != nil || (name == "ttl" && value < 0) {
+				return errors.New("badge must be an integer; ttl must be a nonnegative integer.")
 			}
 		case "volume":
 			var value int
@@ -402,18 +453,33 @@ func validatePayload(payload map[string]json.RawMessage) error {
 				}
 			}
 		default:
-			return errors.New("Unsupported JSON field; consult the README for supported fields.")
+			return errors.New("Unsupported JSON field; use --help for supported fields.")
+		}
+	}
+	if _, single := payload["device_key"]; single {
+		if _, batch := payload["device_keys"]; batch {
+			return errors.New("Use either device_key or device_keys, not both.")
 		}
 	}
 	return nil
 }
 
 func readFile(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
+	// Open nonblocking before checking the descriptor: a pre-open path check
+	// alone can race with replacement by a FIFO and hang outside the timeout.
+	// All supported platforms (Linux and macOS) provide O_NONBLOCK.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("expected a regular file")
+	}
 	return readLimited(f, limit)
 }
 
