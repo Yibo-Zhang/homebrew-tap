@@ -40,7 +40,8 @@ Run these checks after changing publishing automation:
 
 ```sh
 node --test scripts/generate-formula.spec.mjs
-nix shell nixpkgs#actionlint --command actionlint .github/workflows/publish-cli.yml
+node --test scripts/generate-cask.spec.mjs
+nix shell nixpkgs#actionlint --command actionlint .github/workflows/*.yml
 ```
 
 For Bark CLI changes, also run `go test ./...` and `go vet ./...` from

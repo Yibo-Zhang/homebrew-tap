@@ -1,6 +1,6 @@
 # Yibo's Homebrew Tap
 
-Homebrew formulas, compiled CLI releases, and small open-source tools.
+Homebrew formulas, macOS casks, compiled releases, and small open-source tools.
 
 Publishing a binary here makes that binary publicly downloadable. It does not
 publish the corresponding source code or grant an open-source license. Unless a
@@ -17,11 +17,18 @@ brew install Yibo-Zhang/tap/teeble
 brew install Yibo-Zhang/tap/bark-cli
 ```
 
+Install the Halo macOS app as a cask:
+
+```sh
+brew install --cask Yibo-Zhang/tap/halo
+```
+
 Or add the tap first:
 
 ```sh
 brew tap Yibo-Zhang/tap
 brew install teeble
+brew install --cask halo
 ```
 
 Upgrade installed tools with the normal Homebrew flow:
@@ -29,14 +36,16 @@ Upgrade installed tools with the normal Homebrew flow:
 ```sh
 brew update
 brew upgrade teeble
+brew upgrade --cask halo
 ```
 
 ## Available tools
 
-| Formula | Description | Source / license |
-| --- | --- | --- |
-| `teeble` | Standalone CLI for Teeble | External / proprietary |
-| `bark-cli` | JSON command-line client for Bark notifications | [Source and usage](tools/bark-cli) / MIT |
+| Package | Type | Description | Source / license |
+| --- | --- | --- | --- |
+| `teeble` | Formula | Standalone CLI for Teeble | External / proprietary |
+| `bark-cli` | Formula | JSON command-line client for Bark notifications | [Source and usage](tools/bark-cli) / MIT |
+| `halo` | Cask | macOS productivity app for AI, transcription, notes, and Scratch | [Source](https://github.com/Yibo-Zhang/halo) |
 
 Bark CLI supports Apple Silicon macOS and Linux amd64/arm64. Homebrew installs
 the macOS binary; Linux archives are available from the `bark-cli-latest`

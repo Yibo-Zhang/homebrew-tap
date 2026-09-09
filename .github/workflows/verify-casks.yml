@@ -1,0 +1,35 @@
+name: Verify Casks
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Casks/**'
+      - 'scripts/generate-cask*'
+      - '.github/workflows/verify-casks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  halo:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Audit and install cask from this checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f Casks/halo.rb ]]; then
+            echo 'Halo cask has not been published yet; generator checks still apply.'
+            exit 0
+          fi
+          brew tap Yibo-Zhang/tap "$GITHUB_WORKSPACE"
+          brew audit --cask --strict Yibo-Zhang/tap/halo
+          brew install --cask Yibo-Zhang/tap/halo
+          test -d /Applications/Halo.app
+          codesign --verify --deep --strict /Applications/Halo.app
+          test "$(defaults read /Applications/Halo.app/Contents/Info CFBundleIdentifier)" = 'com.halo.swift'

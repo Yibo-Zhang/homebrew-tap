@@ -3,6 +3,22 @@
 External source repositories own their build and test process. This repository
 also owns the source and build process for open-source tools under `tools/`.
 
+## Halo cask
+
+Halo owns its app build and GitHub Release. Pushing a version tag such as
+`v1.0.0` in `Yibo-Zhang/halo` builds and tests the arm64 app, publishes the
+versioned zip, checks out this tap using Halo's dedicated write deploy key, and
+generates `Casks/halo.rb` with the release checksum.
+
+The Halo repository stores that private key as the
+`HOMEBREW_TAP_DEPLOY_KEY` Actions secret. Its public key must be registered as
+a write-enabled deploy key on this repository and must not be reused by other
+publishers. Changes under `Casks/` trigger a clean Homebrew installation test.
+
+Halo is currently ad-hoc signed rather than Developer ID signed and notarized.
+The cask preserves macOS quarantine and tells users how to approve the first
+launch; publishing automation must not remove or bypass Gatekeeper metadata.
+
 ## Bark CLI
 
 Push changes to `tools/bark-cli/`, `scripts/build-bark-cli.sh`, the formula
