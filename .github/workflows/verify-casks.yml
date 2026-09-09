@@ -9,6 +9,7 @@ on:
       - 'scripts/generate-cask*'
       - '.github/workflows/verify-casks.yml'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -18,6 +19,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
 
       - name: Audit and install cask from this checkout
         shell: bash

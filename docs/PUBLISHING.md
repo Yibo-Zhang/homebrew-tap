@@ -5,10 +5,19 @@ also owns the source and build process for open-source tools under `tools/`.
 
 ## Halo cask
 
-Halo owns its app build and GitHub Release. Pushing a version tag such as
-`v1.0.0` in `Yibo-Zhang/halo` builds and tests the arm64 app, publishes the
-versioned zip, checks out this tap using Halo's dedicated write deploy key, and
-generates `Casks/halo.rb` with the release checksum.
+Halo's private source repository owns its app build and tests. A version tag
+such as `v1.0.0` saves an immutable private release and pushes a binary-only
+payload here using the dedicated write deploy key and `publish-cask/halo` tag.
+The tagged commit starts from tap main and includes `.publish/manifest.json`
+and `.publish/assets/Halo-<version>-arm64.zip`.
+
+`publish-cask.yml` verifies the archive checksum, publishes it on this public
+repository under `halo-v<version>`, generates `Casks/halo.rb`, and tests a clean
+Homebrew install before deleting the temporary tag. Existing release assets
+must match byte-for-byte on a retry. The manifest uses repository
+`Yibo-Zhang/homebrew-tap` and `releaseTagPrefix: "halo-v"`; it contains no
+private source revision or repository metadata. Never point a public cask at a
+private source release.
 
 The Halo repository stores that private key as the
 `HOMEBREW_TAP_DEPLOY_KEY` Actions secret. Its public key must be registered as

@@ -45,7 +45,7 @@ brew upgrade --cask halo
 | --- | --- | --- | --- |
 | `teeble` | Formula | Standalone CLI for Teeble | External / proprietary |
 | `bark-cli` | Formula | JSON command-line client for Bark notifications | [Source and usage](tools/bark-cli) / MIT |
-| `halo` | Cask | macOS productivity app for AI, transcription, notes, and Scratch | [Source](https://github.com/Yibo-Zhang/halo) |
+| `halo` | Cask | macOS productivity app for AI, transcription, notes, and Scratch | External / proprietary |
 
 Bark CLI supports Apple Silicon macOS and Linux amd64/arm64. Homebrew installs
 the macOS binary; Linux archives are available from the `bark-cli-latest`

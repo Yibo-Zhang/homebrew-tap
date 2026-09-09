@@ -49,9 +49,16 @@ test('rejects invalid versions, hashes, repositories, app names and macOS releas
     { repository: 'https://github.com/Yibo-Zhang/halo' },
     { app: '../Halo.app' },
     { minimumMacOS: 'ventura' },
+    { releaseTagPrefix: '../private' },
   ]) {
     await assert.rejects(generate(overrides));
   }
+});
+
+test('points private-source binaries at a public tap release', async () => {
+  const cask = await generate({ repository: 'Yibo-Zhang/homebrew-tap', releaseTagPrefix: 'halo-v' });
+  assert.match(cask, /github\.com\/Yibo-Zhang\/homebrew-tap\/releases\/download\/halo-v#\{version\}/);
+  assert.ok(!cask.includes('github.com/Yibo-Zhang/halo'));
 });
 
 test('escapes Ruby interpolation in human-readable manifest fields', async () => {

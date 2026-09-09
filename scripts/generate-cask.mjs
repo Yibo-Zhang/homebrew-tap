@@ -39,16 +39,20 @@ const minimumMacOS = requireString(
   /^(?:sonoma|sequoia|tahoe)$/
 );
 const homepage = `https://github.com/${repository}`;
+const releaseTagPrefix = requireString(
+  manifest.releaseTagPrefix ?? 'v',
+  'releaseTagPrefix',
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+);
 
 const rubyString = (value) => JSON.stringify(value).replace(/#(?=[{@$])/g, '\\#');
-const releaseURL = `https://github.com/${repository}/releases/download/v\#{version}/${assetPrefix}-\#{version}-arm64.zip`;
+const releaseURL = `https://github.com/${repository}/releases/download/${releaseTagPrefix}\#{version}/${assetPrefix}-\#{version}-arm64.zip`;
 
 const cask = `cask ${rubyString(token)} do
   version ${rubyString(version)}
   sha256 ${rubyString(sha256)}
 
-  url "${releaseURL}",
-      verified: ${rubyString(`github.com/${repository}/`)}
+  url "${releaseURL}"
   name ${rubyString(name)}
   desc ${rubyString(description)}
   homepage ${rubyString(homepage)}
