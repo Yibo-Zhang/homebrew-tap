@@ -8,12 +8,12 @@ cask "halo" do
   homepage "https://github.com/Yibo-Zhang/homebrew-tap"
 
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Halo.app"
 
   caveats <<~EOS
     Halo is currently ad-hoc signed and is not notarized.
-    If macOS blocks the first launch, right-click Halo.app in Applications and choose Open.
+    If macOS blocks the first launch, open System Settings > Privacy & Security and click Open Anyway if you trust its source.
   EOS
 end

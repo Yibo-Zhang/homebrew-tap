@@ -58,13 +58,13 @@ const cask = `cask ${rubyString(token)} do
   homepage ${rubyString(homepage)}
 
   depends_on arch: :arm64
-  depends_on macos: ">= :${minimumMacOS}"
+  depends_on macos: :${minimumMacOS}
 
   app ${rubyString(app)}
 
   caveats <<~EOS
     ${name} is currently ad-hoc signed and is not notarized.
-    If macOS blocks the first launch, right-click ${app} in Applications and choose Open.
+    If macOS blocks the first launch, open System Settings > Privacy & Security and click Open Anyway if you trust its source.
   EOS
 end
 `;

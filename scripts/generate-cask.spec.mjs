@@ -37,9 +37,11 @@ test('generates an arm64 Sonoma cask for a versioned GitHub release', async () =
   assert.match(cask, /sha256 "a{64}"/);
   assert.match(cask, /releases\/download\/v#\{version\}\/Halo-#\{version\}-arm64\.zip/);
   assert.match(cask, /depends_on arch: :arm64/);
-  assert.match(cask, /depends_on macos: ">= :sonoma"/);
+  assert.match(cask, /depends_on macos: :sonoma/);
   assert.match(cask, /app "Halo\.app"/);
   assert.match(cask, /ad-hoc signed and is not notarized/);
+  assert.match(cask, /System Settings > Privacy & Security and click Open Anyway/);
+  assert.doesNotMatch(cask, /right-click/);
 });
 
 test('rejects invalid versions, hashes, repositories, app names and macOS releases', async () => {
