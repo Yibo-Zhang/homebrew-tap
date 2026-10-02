@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "tool": "teeble",
+  "description": "Standalone CLI for Teeble",
+  "homepage": "https://github.com/Yibo-Zhang/homebrew-tap",
+  "version": "0.0.0-20261002220501",
+  "sourceVersion": "main-7e27a71",
+  "binary": "teeble",
+  "releaseTitle": "Teeble CLI (latest main)",
+  "checksums": "teeble_7e27a71a6ca6_checksums.txt",
+  "macos": {
+    "arm64": {
+      "asset": "teeble_7e27a71a6ca6_darwin_arm64.tar.gz",
+      "sha256": "5e095887a9a3717098d85c512d3e8c55e0b6242cd08ad2bea6988db9d6cdc9c4"
+    },
+    "amd64": {
+      "asset": "teeble_7e27a71a6ca6_darwin_amd64.tar.gz",
+      "sha256": "569174919f6d7e984c0e115c9d6b2e487effb0c9df2375d27a4d272d87e3cbdb"
+    }
+  }
+}
