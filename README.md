@@ -17,6 +17,9 @@ brew install Yibo-Zhang/tap/teeble
 brew install Yibo-Zhang/tap/bark-cli
 ```
 
+The `teeble` formula provides both `leno` (the preferred command) and the
+compatible `teeble` command. Release archives keep the historical `teeble` binary.
+
 Install the Halo macOS app as a cask:
 
 ```sh
@@ -43,7 +46,7 @@ brew upgrade --cask halo
 
 | Package | Type | Description | Source / license |
 | --- | --- | --- | --- |
-| `teeble` | Formula | Standalone CLI for Teeble | External / proprietary |
+| `teeble` | Formula | Standalone CLI for Leno (`leno` and `teeble`) | External / proprietary |
 | `bark-cli` | Formula | JSON command-line client for Bark notifications | [Source and usage](tools/bark-cli) / MIT |
 | `halo` | Cask | macOS productivity app for AI, transcription, notes, and Scratch | External / proprietary |
 

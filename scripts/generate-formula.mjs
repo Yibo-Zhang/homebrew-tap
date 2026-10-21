@@ -51,6 +51,13 @@ const architectureDependency = architectures.length === 1
   ? `\n  depends_on arch: :${architectures[0] === 'arm64' ? 'arm64' : 'x86_64'}`
   : '';
 
+// Package aliases are installed by Homebrew, never added to release archives.
+const lenoAlias = tool === 'teeble' && binary === 'teeble';
+const aliasInstall = lenoAlias ? '\n    bin.install_symlink "teeble" => "leno"' : '';
+const aliasTest = lenoAlias
+  ? '\n    assert_match "\\\"ok\\\":true", shell_output("#{bin}/leno --version")'
+  : '';
+
 const formula = `class ${formulaClass} < Formula
   desc ${rubyString(description)}
   homepage ${rubyString(homepage)}
@@ -62,11 +69,11 @@ const formula = `class ${formulaClass} < Formula
 ${architectureBlocks}
 
   def install
-    bin.install ${rubyString(binary)}
+    bin.install ${rubyString(binary)}${aliasInstall}
   end
 
   test do
-    assert_match \"\\\"ok\\\":true\", shell_output(\"#{bin}/${binary} --version\")
+    assert_match \"\\\"ok\\\":true\", shell_output(\"#{bin}/${binary} --version\")${aliasTest}
   end
 end
 `;
