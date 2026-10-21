@@ -1,5 +1,5 @@
 class Teeble < Formula
-  desc "Standalone CLI for Teeble"
+  desc "Standalone CLI for Leno"
   homepage "https://github.com/Yibo-Zhang/homebrew-tap"
   version "0.0.0-20261020173029"
   license :cannot_represent
@@ -18,9 +18,11 @@ class Teeble < Formula
 
   def install
     bin.install "teeble"
+    bin.install_symlink "teeble" => "leno"
   end
 
   test do
     assert_match "\"ok\":true", shell_output("#{bin}/teeble --version")
+    assert_match "\"ok\":true", shell_output("#{bin}/leno --version")
   end
 end

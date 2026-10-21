@@ -42,6 +42,8 @@ test('generates architecture-specific URLs and checksums', async () => {
   assert.match(formula, /teeble_0123456789ab_darwin_amd64\.tar\.gz/);
   assert.match(formula, new RegExp(intelSha));
   assert.match(formula, /bin\.install "teeble"/);
+  assert.match(formula, /bin\.install_symlink "teeble" => "leno"/);
+  assert.match(formula, /#\{bin\}\/leno --version/);
   assert.match(formula, /license :cannot_represent/);
   assert.doesNotMatch(formula, /depends_on arch:/);
 });
@@ -71,7 +73,7 @@ test('supports an MIT-licensed Apple Silicon-only tool', async () => {
   assert.match(formula, /license "MIT"/);
   assert.match(formula, /depends_on arch: :arm64/);
   assert.match(formula, /bark-cli-latest\/bark-cli_darwin_arm64\.tar\.gz/);
-  assert.doesNotMatch(formula, /on_intel|amd64/);
+  assert.doesNotMatch(formula, /on_intel|amd64|install_symlink|leno/);
 });
 
 test('rejects missing or unsupported architectures, bad hashes and unrecognized licenses', async () => {
