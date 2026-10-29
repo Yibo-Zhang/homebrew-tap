@@ -1,19 +1,19 @@
 class Teeble < Formula
   desc "Standalone CLI for Leno"
   homepage "https://github.com/Yibo-Zhang/homebrew-tap"
-  version "0.0.0-20261029120113"
+  version "0.0.0-20261029150513"
   license :cannot_represent
 
   depends_on :macos
 
   on_arm do
-    url "https://github.com/Yibo-Zhang/homebrew-tap/releases/download/teeble-latest/teeble_afffa7973791_darwin_arm64.tar.gz"
-    sha256 "cf9887d54d9c5436b9cce23a58559af7dd9cdaa15f5b6fed3b9ee2fe4b5da18b"
+    url "https://github.com/Yibo-Zhang/homebrew-tap/releases/download/teeble-latest/teeble_6224561a488a_darwin_arm64.tar.gz"
+    sha256 "c39382c0767f3324debc2ebdc5db3a76ad1c0f234e4cf577c1b25b7c07234fbc"
   end
 
   on_intel do
-    url "https://github.com/Yibo-Zhang/homebrew-tap/releases/download/teeble-latest/teeble_afffa7973791_darwin_amd64.tar.gz"
-    sha256 "6480ff5a3752b3f0ce8eb43d342fa6f04ed27d08c7d6b21dc0c15d80b1d7e3a3"
+    url "https://github.com/Yibo-Zhang/homebrew-tap/releases/download/teeble-latest/teeble_6224561a488a_darwin_amd64.tar.gz"
+    sha256 "3cf96867ad0153331f02f79ade82eb9f3cd3991c03e4554019762d28037e0327"
   end
 
   def install
